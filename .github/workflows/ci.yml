@@ -80,6 +80,26 @@ jobs:
             --exclude integration-test \
             --workspace
 
+  lint-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy,rust-src
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: Install prerequisites
+        run: brew bundle
+
+      - run: ./clippy.sh
+
   build-test-aya:
     strategy:
       fail-fast: false
@@ -400,8 +420,10 @@ jobs:
       - name: Set cross-compilation env for macOS
         if: runner.os == 'macOS'
         run: |
+          # Add make wrapper that overrides AR/RANLIB for zlib build.
           echo "${{ github.workspace }}/ci/bin" >> $GITHUB_PATH
-          grep -v '^#' ci/libbpf-sys.env | grep -v '^$' | sed 's/"//g' >> $GITHUB_ENV
+          # Export env vars, stripping comments and quotes (shell quoting breaks GITHUB_ENV).
+          grep -v '^#' ci/libbpf-sys.env ci/macos-toolchain.env | grep -v '^$' | sed 's/"//g' >> $GITHUB_ENV
 
       # libbpf-sys cross-compilation workarounds:
       # - linux-libc-dev provides kernel UAPI headers (installed above)
@@ -415,12 +437,10 @@ jobs:
           set -euxo pipefail
 
           # Source cross-compilation env vars for libbpf-sys vendored dependencies.
-          # AR/RANLIB are macOS-specific (musl-cross toolchain), filter them on Linux.
           set -a
+          . ci/libbpf-sys.env
           if [ "$(uname -s)" = "Darwin" ]; then
-            . ci/libbpf-sys.env
-          else
-            eval "$(grep -v '^AR_\|^RANLIB_\|^#' ci/libbpf-sys.env | grep -v '^$')"
+            . ci/macos-toolchain.env
           fi
           set +a
 
@@ -443,6 +463,7 @@ jobs:
     if: always()
     needs:
       - lint
+      - lint-macos
       - build-test-aya
       - build-test-aya-ebpf
       - run-integration-test
